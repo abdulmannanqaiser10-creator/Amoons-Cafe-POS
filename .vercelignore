@@ -1,0 +1,12 @@
+node_modules
+.vercel
+backend/node_modules
+frontend/node_modules
+frontend/dist
+# Local browser-profile artefacts used by the screenshot scripts (~3.4 GB);
+# they are not part of the app and exceed Vercel's 10 MB upload limit.
+frontend/scripts
+backend/.env
+.env
+.env.local
+*.log
