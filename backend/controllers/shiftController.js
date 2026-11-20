@@ -552,12 +552,12 @@ exports.close = async (req, res) => {
 
     const closedShift = await findShift(shift.id);
     try {
-      require("../services/emailNotifications").queueShiftClosed(
+      await require("../services/emailNotifications").awaitShiftClosed(
         closedShift,
         closingReport
       );
     } catch (emailError) {
-      console.error("[email] Failed to queue shift notification:", emailError.message);
+      console.error("[email] Failed to send shift notification:", emailError.message);
     }
 
     res.json({

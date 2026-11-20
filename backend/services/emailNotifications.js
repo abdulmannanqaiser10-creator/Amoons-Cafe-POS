@@ -1,6 +1,9 @@
 const nodemailer = require("nodemailer");
 const db = require("../config/db");
 
+const SMTP_TIMEOUT_MS = 18000;
+const SEND_BUDGET_MS = 20000;
+
 function money(value) {
   const n = Number(value);
   return `Rs ${Number.isFinite(n) ? n.toFixed(2) : "0.00"}`;
@@ -14,11 +17,22 @@ function esc(value) {
     .replace(/"/g, "&quot;");
 }
 
+function gmailPass() {
+  // App Passwords are often copied with spaces; strip them.
+  return String(process.env.GMAIL_PASS || "").replace(/\s+/g, "");
+}
+
 function notificationEnabled() {
   return (
     String(process.env.GMAIL_NOTIFICATIONS_ENABLED || "true").toLowerCase() !==
       "false" &&
-    Boolean(process.env.GMAIL_USER && process.env.GMAIL_PASS)
+    Boolean(process.env.GMAIL_USER && gmailPass())
+  );
+}
+
+function httpFallbackEnabled() {
+  return (
+    String(process.env.GMAIL_HTTP_FALLBACK || "true").toLowerCase() !== "false"
   );
 }
 
@@ -30,30 +44,43 @@ function recipient() {
   );
 }
 
+function formatDateTime(value) {
+  if (!value) return new Date().toLocaleString("en-PK", { hour12: true });
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString("en-PK", {
+    timeZone: process.env.GMAIL_TIMEZONE || "Asia/Karachi",
+    hour12: true,
+  });
+}
+
 let transporter = null;
+
+function resetTransporter() {
+  transporter = null;
+}
 
 function getTransporter() {
   if (transporter) return transporter;
 
+  const pass = gmailPass();
   transporter = nodemailer.createTransport({
-    service: "gmail",
+    host: process.env.GMAIL_SMTP_HOST || "smtp.gmail.com",
+    port: Number(process.env.GMAIL_SMTP_PORT || 465),
+    secure: String(process.env.GMAIL_SMTP_SECURE || "true").toLowerCase() !== "false",
     auth: {
       user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_PASS,
+      pass,
     },
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_TIMEOUT_MS,
   });
 
   return transporter;
 }
 
-async function sendMail({ subject, text, html }) {
-  if (!notificationEnabled()) {
-    console.warn(
-      "[email] Skipped notification — set GMAIL_USER and GMAIL_PASS to enable."
-    );
-    return { skipped: true };
-  }
-
+async function sendViaSmtp({ subject, text, html }) {
   const fromName = process.env.GMAIL_FROM_NAME || "Amoons Cafe POS";
   const info = await getTransporter().sendMail({
     from: `"${fromName}" <${process.env.GMAIL_USER}>`,
@@ -62,8 +89,154 @@ async function sendMail({ subject, text, html }) {
     text,
     html,
   });
+  return { skipped: false, via: "smtp", messageId: info.messageId };
+}
 
-  return { skipped: false, messageId: info.messageId };
+function publicOrigin() {
+  const host =
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL ||
+    "amoonssoft.vercel.app";
+  const normalized = String(host).replace(/^https?:\/\//, "");
+  return `https://${normalized}`;
+}
+
+/**
+ * HTTP delivery fallback (FormSubmit) so notifications still reach the
+ * configured Gmail inbox when Google rejects the account login password.
+ * First delivery may require clicking FormSubmit's one-time confirmation link.
+ */
+async function sendViaHttpFallback({ subject, text, html }) {
+  const to = recipient();
+  const origin = publicOrigin();
+  const url = `https://formsubmit.co/ajax/${encodeURIComponent(to)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SMTP_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Origin: origin,
+        Referer: `${origin}/`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        _subject: subject,
+        _template: "box",
+        _captcha: "false",
+        name: process.env.GMAIL_FROM_NAME || "Amoons Cafe POS",
+        email: process.env.GMAIL_USER || to,
+        message: text,
+        html,
+      }),
+    });
+
+    const body = await response.text();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      parsed = null;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP fallback failed (${response.status}): ${body.slice(0, 240)}`
+      );
+    }
+
+    const message = String(parsed?.message || body || "");
+    const successFlag = parsed?.success;
+    const ok =
+      successFlag === true ||
+      successFlag === "true" ||
+      /thank you|submitted|sent/i.test(message);
+
+    if (/needs Activation|Activate Form/i.test(message)) {
+      console.warn(
+        "[email] FormSubmit activation required — check inbox for Activate Form link:",
+        to
+      );
+      return {
+        skipped: false,
+        via: "http-fallback",
+        pendingActivation: true,
+        response: message.slice(0, 240),
+      };
+    }
+
+    if (!ok && successFlag === "false") {
+      throw new Error(message.slice(0, 240) || "HTTP fallback rejected");
+    }
+
+    return {
+      skipped: false,
+      via: "http-fallback",
+      response: message.slice(0, 240),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function sendMail({ subject, text, html }) {
+  if (
+    String(process.env.GMAIL_NOTIFICATIONS_ENABLED || "true").toLowerCase() ===
+    "false"
+  ) {
+    console.warn("[email] Skipped — GMAIL_NOTIFICATIONS_ENABLED=false");
+    return { skipped: true };
+  }
+
+  const to = recipient();
+  if (!to) {
+    console.warn("[email] Skipped — no recipient configured");
+    return { skipped: true };
+  }
+
+  let smtpError = null;
+
+  if (notificationEnabled()) {
+    try {
+      const result = await sendViaSmtp({ subject, text, html });
+      console.log(`[email] Sent via SMTP → ${to}: ${subject}`);
+      return result;
+    } catch (error) {
+      smtpError = error;
+      resetTransporter();
+      console.error("[email] SMTP send failed:", error.message);
+    }
+  } else {
+    console.warn(
+      "[email] Gmail SMTP not configured (need GMAIL_USER + App Password in GMAIL_PASS)."
+    );
+  }
+
+  if (httpFallbackEnabled()) {
+    try {
+      const result = await sendViaHttpFallback({ subject, text, html });
+      console.log(`[email] Sent via HTTP fallback → ${to}: ${subject}`);
+      if (smtpError) {
+        result.smtpError = smtpError.message;
+      }
+      return result;
+    } catch (fallbackError) {
+      console.error("[email] HTTP fallback failed:", fallbackError.message);
+      return {
+        ok: false,
+        error: fallbackError.message,
+        smtpError: smtpError ? smtpError.message : undefined,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    error: smtpError ? smtpError.message : "Email not configured",
+  };
 }
 
 function saleItemsRows(order) {
@@ -117,9 +290,11 @@ async function loadOrderById(orderId) {
             o.subtotal,
             o.discount_amount AS "discountAmount",
             o.tax_amount AS "taxAmount",
+            o.tax_rate AS "taxRate",
             o.total,
             COALESCE(o.note, '') AS note,
             o.created_at AS "createdAt",
+            o.updated_at AS "updatedAt",
             COALESCE((
               SELECT json_agg(json_build_object(
                 'name', oi.product_name,
@@ -137,7 +312,7 @@ async function loadOrderById(orderId) {
 }
 
 /**
- * Fire-and-forget New Sale email. Never throws to callers.
+ * New Sale email with full invoice details. Never throws to callers.
  */
 async function notifyNewSale(orderOrId) {
   try {
@@ -151,36 +326,42 @@ async function notifyNewSale(orderOrId) {
     if (!order) return { skipped: true };
 
     const items = saleItemsRows(order);
-    const subject = `New Sale · ${order.orderNumber || "Order"} · ${money(
-      order.total
-    )}`;
+    const invoice = order.orderNumber || "Order";
+    const placedAt = formatDateTime(order.createdAt || order.updatedAt);
+    const discount = Number(order.discountAmount) || 0;
+    const tax = Number(order.taxAmount ?? order.taxTotal) || 0;
+    const subtotal = Number(order.subtotal) || 0;
+    const total = Number(order.total) || 0;
+    const taxRate =
+      order.taxRate != null && Number(order.taxRate) > 0
+        ? ` (${Number(order.taxRate)}%)`
+        : "";
+
+    const subject = `New Sale · ${invoice} · ${money(total)}`;
 
     const text = [
       "New Sale Notification — Amoons Cafe POS",
       "",
-      `Order: ${order.orderNumber || ""}`,
+      `Invoice: ${invoice}`,
+      `Date / Time: ${placedAt}`,
       `Status: ${order.status || ""}`,
       `Channel: ${order.channel || ""}`,
-      `Payment: ${order.paymentMethod || ""} (${order.paymentStatus || ""})`,
+      `Payment method: ${order.paymentMethod || ""}`,
+      `Payment status: ${order.paymentStatus || ""}`,
       `Customer: ${order.customerName || "—"}`,
       `Phone: ${order.customerPhone || "—"}`,
-      `Placed: ${order.createdAt || new Date().toISOString()}`,
       "",
       "Items:",
       items.text,
       "",
-      `Subtotal: ${money(order.subtotal)}`,
-      Number(order.discountAmount) > 0
-        ? `Discount: -${money(order.discountAmount)}`
-        : null,
-      Number(order.taxAmount ?? order.taxTotal) > 0
-        ? `Tax: ${money(order.taxAmount ?? order.taxTotal)}`
-        : null,
-      `Total: ${money(order.total)}`,
+      `Subtotal: ${money(subtotal)}`,
+      `Discount: ${discount > 0 ? `-${money(discount)}` : money(0)}`,
+      `Tax${taxRate}: ${money(tax)}`,
+      `Grand Total: ${money(total)}`,
       `Amount paid: ${money(order.amountPaid)}`,
       order.note ? `Note: ${order.note}` : null,
     ]
-      .filter(Boolean)
+      .filter((line) => line !== null)
       .join("\n");
 
     const html = `
@@ -188,53 +369,34 @@ async function notifyNewSale(orderOrId) {
         <h2 style="color:#4a001d;margin:0 0 8px">New Sale</h2>
         <p style="margin:0 0 12px">Amoons Cafe POS sale notification</p>
         <table style="border-collapse:collapse;width:100%;max-width:640px;margin-bottom:14px">
-          <tr><td><b>Order</b></td><td>${esc(order.orderNumber)}</td></tr>
+          <tr><td><b>Invoice</b></td><td>${esc(invoice)}</td></tr>
+          <tr><td><b>Date / Time</b></td><td>${esc(placedAt)}</td></tr>
           <tr><td><b>Status</b></td><td>${esc(order.status)}</td></tr>
           <tr><td><b>Channel</b></td><td>${esc(order.channel)}</td></tr>
-          <tr><td><b>Payment</b></td><td>${esc(order.paymentMethod)} (${esc(
-      order.paymentStatus
-    )})</td></tr>
-          <tr><td><b>Customer</b></td><td>${esc(
-            order.customerName || "—"
-          )}</td></tr>
-          <tr><td><b>Phone</b></td><td>${esc(
-            order.customerPhone || "—"
-          )}</td></tr>
-          <tr><td><b>Placed</b></td><td>${esc(
-            order.createdAt || new Date().toISOString()
-          )}</td></tr>
+          <tr><td><b>Payment method</b></td><td>${esc(order.paymentMethod)}</td></tr>
+          <tr><td><b>Payment status</b></td><td>${esc(order.paymentStatus)}</td></tr>
+          <tr><td><b>Customer</b></td><td>${esc(order.customerName || "—")}</td></tr>
+          <tr><td><b>Phone</b></td><td>${esc(order.customerPhone || "—")}</td></tr>
         </table>
         <table style="border-collapse:collapse;width:100%;max-width:640px" border="1" cellpadding="8">
           <thead style="background:#f7eef2">
             <tr>
               <th align="left">Item</th>
               <th>Qty</th>
-              <th align="right">Price</th>
-              <th align="right">Line</th>
+              <th align="right">Unit Price</th>
+              <th align="right">Line Total</th>
             </tr>
           </thead>
           <tbody>${items.html}</tbody>
         </table>
         <p style="margin-top:14px">
-          <b>Subtotal:</b> ${esc(money(order.subtotal))}<br/>
-          ${
-            Number(order.discountAmount) > 0
-              ? `<b>Discount:</b> -${esc(money(order.discountAmount))}<br/>`
-              : ""
-          }
-          ${
-            Number(order.taxAmount ?? order.taxTotal) > 0
-              ? `<b>Tax:</b> ${esc(money(order.taxAmount ?? order.taxTotal))}<br/>`
-              : ""
-          }
-          <b>Total:</b> ${esc(money(order.total))}<br/>
+          <b>Subtotal:</b> ${esc(money(subtotal))}<br/>
+          <b>Discount:</b> ${esc(discount > 0 ? `-${money(discount)}` : money(0))}<br/>
+          <b>Tax${esc(taxRate)}:</b> ${esc(money(tax))}<br/>
+          <b>Grand Total:</b> ${esc(money(total))}<br/>
           <b>Amount paid:</b> ${esc(money(order.amountPaid))}
         </p>
-        ${
-          order.note
-            ? `<p><b>Note:</b> ${esc(order.note)}</p>`
-            : ""
-        }
+        ${order.note ? `<p><b>Note:</b> ${esc(order.note)}</p>` : ""}
       </div>
     `;
 
@@ -246,7 +408,7 @@ async function notifyNewSale(orderOrId) {
 }
 
 /**
- * Fire-and-forget Shift Closed email. Never throws to callers.
+ * Shift Closed email. Never throws to callers.
  */
 async function notifyShiftClosed(shift, closingReport = null) {
   try {
@@ -267,8 +429,8 @@ async function notifyShiftClosed(shift, closingReport = null) {
       `Shift: ${shift.shiftNumber || ""}`,
       `Cashier: ${shift.employeeName || ""}`,
       `Branch: ${shift.branchName || ""}`,
-      `Opened: ${shift.openedAt || report.openedAt || ""}`,
-      `Closed: ${shift.closedAt || report.closedAt || ""}`,
+      `Opened: ${formatDateTime(shift.openedAt || report.openedAt)}`,
+      `Closed: ${formatDateTime(shift.closedAt || report.closedAt)}`,
       "",
       `Opening cash: ${money(shift.openingCash ?? report.openingCash)}`,
       `Expected cash: ${money(shift.expectedCash ?? report.expectedCash)}`,
@@ -301,10 +463,10 @@ async function notifyShiftClosed(shift, closingReport = null) {
           <tr><td><b>Cashier</b></td><td>${esc(shift.employeeName)}</td></tr>
           <tr><td><b>Branch</b></td><td>${esc(shift.branchName || "—")}</td></tr>
           <tr><td><b>Opened</b></td><td>${esc(
-            shift.openedAt || report.openedAt || ""
+            formatDateTime(shift.openedAt || report.openedAt)
           )}</td></tr>
           <tr><td><b>Closed</b></td><td>${esc(
-            shift.closedAt || report.closedAt || ""
+            formatDateTime(shift.closedAt || report.closedAt)
           )}</td></tr>
           <tr><td><b>Opening cash</b></td><td>${esc(
             money(shift.openingCash ?? report.openingCash)
@@ -362,7 +524,45 @@ function notesLine(notes) {
   return value ? `Notes: ${value}` : null;
 }
 
-/** Non-blocking wrappers used by controllers. */
+/**
+ * Await sale email within a budget so Vercel/serverless does not freeze
+ * the request before SMTP/HTTP delivery finishes.
+ */
+async function awaitNewSale(order, budgetMs = SEND_BUDGET_MS) {
+  try {
+    return await Promise.race([
+      notifyNewSale(order),
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve({ skipped: true, timedOut: true }),
+          budgetMs
+        )
+      ),
+    ]);
+  } catch (error) {
+    console.error("[email] awaitNewSale failed:", error.message);
+    return { ok: false, error: error.message };
+  }
+}
+
+async function awaitShiftClosed(shift, closingReport, budgetMs = SEND_BUDGET_MS) {
+  try {
+    return await Promise.race([
+      notifyShiftClosed(shift, closingReport),
+      new Promise((resolve) =>
+        setTimeout(
+          () => resolve({ skipped: true, timedOut: true }),
+          budgetMs
+        )
+      ),
+    ]);
+  } catch (error) {
+    console.error("[email] awaitShiftClosed failed:", error.message);
+    return { ok: false, error: error.message };
+  }
+}
+
+/** Non-blocking wrappers (prefer awaitNewSale / awaitShiftClosed on Vercel). */
 function queueNewSale(order) {
   void notifyNewSale(order);
 }
@@ -374,8 +574,11 @@ function queueShiftClosed(shift, closingReport) {
 module.exports = {
   notifyNewSale,
   notifyShiftClosed,
+  awaitNewSale,
+  awaitShiftClosed,
   queueNewSale,
   queueShiftClosed,
   sendMail,
   notificationEnabled,
+  resetTransporter,
 };

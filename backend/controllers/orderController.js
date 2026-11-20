@@ -1052,9 +1052,9 @@ exports.updateStatus = async (req, res) => {
     const order = await fetchOrder(existing.id);
     if (status === "Completed") {
       try {
-        require("../services/emailNotifications").queueNewSale(order);
+        await require("../services/emailNotifications").awaitNewSale(order);
       } catch (emailError) {
-        console.error("[email] Failed to queue sale notification:", emailError.message);
+        console.error("[email] Failed to send sale notification:", emailError.message);
       }
     }
     res.json({ message: `Order marked ${status}`, order });
@@ -1161,9 +1161,9 @@ exports.complete = async (req, res) => {
     }
 
     try {
-      require("../services/emailNotifications").queueNewSale(order);
+      await require("../services/emailNotifications").awaitNewSale(order);
     } catch (emailError) {
-      console.error("[email] Failed to queue sale notification:", emailError.message);
+      console.error("[email] Failed to send sale notification:", emailError.message);
     }
 
     res.json({

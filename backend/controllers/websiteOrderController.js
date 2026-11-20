@@ -382,9 +382,9 @@ exports.create = async (req, res) => {
     }
 
     try {
-      require("../services/emailNotifications").queueNewSale(orderId);
+      await require("../services/emailNotifications").awaitNewSale(orderId);
     } catch (emailError) {
-      console.error("[email] Failed to queue website sale notification:", emailError.message);
+      console.error("[email] Failed to send website sale notification:", emailError.message);
     }
 
     res.status(201).json({

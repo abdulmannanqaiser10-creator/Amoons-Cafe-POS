@@ -25,17 +25,24 @@ async function main() {
     customerPhone: "03001234567",
     createdAt: new Date().toISOString(),
     subtotal: 1000,
-    discountAmount: 0,
-    taxAmount: 160,
-    total: 1160,
-    amountPaid: 1160,
+    discountAmount: 50,
+    taxAmount: 142.5,
+    taxRate: 15,
+    total: 1092.5,
+    amountPaid: 1092.5,
     note: "Email notification smoke test",
     items: [
       { name: "Hot Coffee", quantity: 2, price: 350, lineTotal: 700 },
       { name: "Chocolate Frappe", quantity: 1, price: 300, lineTotal: 300 },
     ],
   });
-  console.log("New sale result:", sale);
+  console.log("New sale result:", JSON.stringify(sale, null, 2));
+  const saleOk =
+    sale &&
+    sale.ok !== false &&
+    !sale.skipped &&
+    (sale.messageId || sale.via || sale.pendingActivation);
+  if (!saleOk) process.exitCode = 1;
 
   const shift = await notifyShiftClosed(
     {
