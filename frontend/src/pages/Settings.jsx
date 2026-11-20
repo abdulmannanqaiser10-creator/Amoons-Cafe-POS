@@ -430,7 +430,7 @@ function Settings() {
                   <Switch label="Auto Print Kitchen Ticket" checked={printer.autoPrintKitchen} onChange={(value) => setPrinter({ ...printer, autoPrintKitchen: value })} />
                   <Switch label="Voice Alert for New Orders" checked={printer.voiceAlert} onChange={(value) => setPrinter({ ...printer, voiceAlert: value })} />
                 </div>
-                <p className="mp-settings-note"><PrinterIcon /> {printerCapabilities?.silentPrinting === false ? "Printing uses the browser's regular print dialog. Direct USB/network printing is not available without a local print agent." : "Choose the thermal printer in the browser print dialog."}</p>
+                <p className="mp-settings-note"><PrinterIcon /> {printerCapabilities?.silentPrinting ? "Direct printing uses QZ Tray (install from qz.io, keep it running, set Printer Name to your thermal printer). Avoid Browser connection — that opens Chrome's print dialog." : "Printing uses the browser print dialog."}</p>
                 <button type="button" className="om-btn om-btn--ghost" onClick={testPrinter} disabled={busy}><ReceiptIcon className="om-btn-icon" /> Test Receipt</button>
               </>
             ) : null}

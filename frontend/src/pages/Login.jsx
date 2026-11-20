@@ -67,7 +67,7 @@ function BrandPanel() {
       />
       <div className="brand-coffee-veil" aria-hidden="true" />
       <div className="brand-head brand-head--lexcore">
-        <LexcoreLogo light />
+        <LexcoreLogo light compact />
       </div>
       <div className="brand-art brand-art--coffee">
         <p className="brand-coffee-quote brand-coffee-amoons">Amoons</p>

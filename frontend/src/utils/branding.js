@@ -7,7 +7,7 @@ export const LEXCORE = {
   email: "lexcoresolutions@gmail.com",
   url: "https://lexcoresolutions.com",
   tagline: "Intelligent Digital Solutions",
-  logoSrc: "/lexcore-logo.svg",
+  logoSrc: "/lexcorelogo.png",
 };
 
 /** On-screen brand label — Lexcore Solutions only (no “Powered by”). */

@@ -94,32 +94,73 @@ function poweredByFooter() {
   return `<p class="powered">${esc(PRINT_VENDOR_LINE)}</p>`;
 }
 
-/**
- * Prints through a hidden iframe (popups are blocked on POS/kiosk browsers).
- *
- * Resolves as soon as the print dialog is invoked so checkout stays fast.
- * The iframe stays mounted until afterprint so the preview is never torn down
- * mid-dialog (that freeze is what made Print Bill feel hung before).
- */
-export function printHtml({ title, bodyHtml, css, copies = 1 }) {
-  if (typeof window === "undefined" || typeof window.print !== "function") {
-    return Promise.resolve(false);
-  }
-
+function buildPrintDocument({ title, bodyHtml, css, copies = 1 }) {
   const count = Math.min(Math.max(Math.trunc(Number(copies)) || 1, 1), 5);
   const page =
     count === 1
       ? bodyHtml
       : Array.from({ length: count }, () => `<div class="copy">${bodyHtml}</div>`).join("");
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(
-    title || "Print"
-  )}</title><style>${css}</style></head><body>${page}</body></html>`;
+  return {
+    count,
+    html: `<!doctype html><html><head><meta charset="utf-8"><title>${esc(
+      title || "Print"
+    )}</title><style>${css}</style></head><body>${page}</body></html>`,
+  };
+}
 
+/**
+ * Silent print via QZ Tray when available; otherwise optional browser fallback.
+ * Prefer QZ so KOT/Bill never open Chrome's print preview dialog.
+ */
+export async function printHtml({
+  title,
+  bodyHtml,
+  css,
+  copies = 1,
+  printerName = "",
+  paperWidth = 80,
+  allowBrowserFallback = false,
+}) {
+  if (typeof window === "undefined") return false;
+
+  const { count, html } = buildPrintDocument({ title, bodyHtml, css, copies });
+
+  try {
+    const { printHtmlViaQz } = await import("./qzTray");
+    await printHtmlViaQz({
+      html,
+      printerName,
+      paperWidthMm: paperWidth,
+      copies: count,
+    });
+    return true;
+  } catch (qzError) {
+    if (!allowBrowserFallback) {
+      console.error("[print] QZ Tray silent print failed:", qzError?.message || qzError);
+      throw new Error(
+        qzError?.message ||
+          "Direct printing requires QZ Tray. Install it on this PC, keep it running, then try again."
+      );
+    }
+    console.warn(
+      "[print] QZ unavailable, falling back to browser print:",
+      qzError?.message || qzError
+    );
+  }
+
+  if (typeof window.print !== "function") {
+    return false;
+  }
+
+  return printHtmlBrowser({ title, html: html, copies: count });
+}
+
+/** Legacy iframe + window.print path (shows the browser print dialog). */
+function printHtmlBrowser({ title, html }) {
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.setAttribute("title", title || "Print");
-  // Sized frame with visibility:hidden — zero-size / fully transparent frames print blank.
   frame.style.cssText =
     "position:fixed;right:0;bottom:0;width:80mm;height:120vh;border:0;z-index:-1;opacity:0.01;pointer-events:none;";
 
@@ -163,7 +204,6 @@ export function printHtml({ title, bodyHtml, css, copies = 1 }) {
       resolve(Boolean(ok));
     };
 
-    // Signal success as soon as the dialog is opened; keep frame until afterprint.
     const reportOpened = () => {
       if (!opened) return;
       if (!settled) {
@@ -194,7 +234,6 @@ export function printHtml({ title, bodyHtml, css, copies = 1 }) {
         const started = Date.now();
         view.print();
         reportOpened();
-        // Blocking print(): dialog already closed when we get here.
         if (Date.now() - started > 300) onAfterPrint();
       } catch {
         finish(false);
@@ -219,7 +258,6 @@ export function printHtml({ title, bodyHtml, css, copies = 1 }) {
       : Promise.resolve();
 
     ready.then(() => {
-      // Double rAF lets layout paint before the dialog snapshots the page.
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(runPrint);
       });
@@ -382,7 +420,17 @@ function kitchenMarkup(order) {
   `;
 }
 
-export async function printReceipt(order, { paperWidth = 80, copies = 1, business, receipt } = {}) {
+export async function printReceipt(
+  order,
+  {
+    paperWidth = 80,
+    copies = 1,
+    business,
+    receipt,
+    printerName = "",
+    allowBrowserFallback = false,
+  } = {}
+) {
   if (!order) return false;
   applyReceiptProfile({ business, receipt });
 
@@ -391,10 +439,21 @@ export async function printReceipt(order, { paperWidth = 80, copies = 1, busines
     bodyHtml: await receiptMarkup(order),
     css: baseCss(paperWidth),
     copies,
+    paperWidth,
+    printerName,
+    allowBrowserFallback,
   });
 }
 
-export async function printKitchenTicket(order, { paperWidth = 80, copies = 1 } = {}) {
+export async function printKitchenTicket(
+  order,
+  {
+    paperWidth = 80,
+    copies = 1,
+    printerName = "",
+    allowBrowserFallback = false,
+  } = {}
+) {
   if (!order) return false;
 
   return printHtml({
@@ -402,16 +461,25 @@ export async function printKitchenTicket(order, { paperWidth = 80, copies = 1 } 
     bodyHtml: kitchenMarkup(order),
     css: baseCss(paperWidth),
     copies,
+    paperWidth,
+    printerName,
+    allowBrowserFallback,
   });
 }
 
 /**
- * Kitchen ticket then customer bill in a single job, so the till only ever
- * raises one browser dialog. Each copy keeps its own page break.
+ * Kitchen ticket then customer bill in one silent QZ job (or one browser job).
  */
 export async function printKitchenAndBill(
   order,
-  { paperWidth = 80, copies = 1, business, receipt } = {}
+  {
+    paperWidth = 80,
+    copies = 1,
+    business,
+    receipt,
+    printerName = "",
+    allowBrowserFallback = false,
+  } = {}
 ) {
   if (!order) return false;
   applyReceiptProfile({ business, receipt });
@@ -424,5 +492,8 @@ export async function printKitchenAndBill(
     )}</section><section class="copy">${bill}</section>`,
     css: baseCss(paperWidth),
     copies,
+    paperWidth,
+    printerName,
+    allowBrowserFallback,
   });
 }

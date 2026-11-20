@@ -5,7 +5,7 @@ const PRINTER_KEY = "printer";
 const PRINTER_DEFAULTS = {
   printerName: "Counter Receipt Printer",
   printerType: "Both",
-  connection: "Browser",
+  connection: "QZ Tray",
   paperWidth: 80,
   copies: 1,
   autoPrintReceipt: true,
@@ -14,23 +14,25 @@ const PRINTER_DEFAULTS = {
 };
 
 const PRINTER_TYPES = ["Receipt", "Kitchen", "Both"];
-const CONNECTIONS = ["Browser", "Network", "USB"];
+const CONNECTIONS = ["QZ Tray", "Browser", "Network", "USB"];
 const PAPER_WIDTHS = [58, 80];
 
-// A browser page can only reach a printer through the print dialog. Network and
-// USB sockets need a local agent, so they stay a stated limitation rather than a
-// setting that pretends to work.
+// QZ Tray is the supported silent path for thermal printers on the till PC.
+// Browser keeps the legacy print-dialog path as a manual fallback.
 const CAPABILITIES = {
   connections: CONNECTIONS.map((id) => ({
     id,
-    available: id === "Browser",
+    available: id === "QZ Tray" || id === "Browser",
     note:
-      id === "Browser"
-        ? "Opens the normal browser print dialog; pick the thermal printer there."
-        : `Requires a ${id === "USB" ? "USB" : "network"} print agent installed on this machine, which this app does not have.`,
+      id === "QZ Tray"
+        ? "Silent direct print via QZ Tray (install + keep running on this PC)."
+        : id === "Browser"
+          ? "Opens the browser print dialog (not used for silent POS printing)."
+          : `Requires a ${id === "USB" ? "USB" : "network"} print agent on this machine.`,
   })),
   copies: { min: 1, max: 5 },
-  silentPrinting: false,
+  silentPrinting: true,
+  silentPrintingRequires: "QZ Tray desktop app on the POS terminal",
 };
 
 /* ------------------------------------------------------------------ */

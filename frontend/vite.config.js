@@ -4,6 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  optimizeDeps: {
+    include: ["qz-tray"],
+  },
   server: {
     proxy: {
       "/api": "http://localhost:5000",

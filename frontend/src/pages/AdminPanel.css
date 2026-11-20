@@ -275,9 +275,12 @@
 }
 
 .ad-rail-logo .lexcore-logo,
-.ad-rail-logo .lexcore-mark {
+.ad-rail-logo .lexcore-mark,
+.ad-rail-logo .lexcore-mark--png {
   width: 28px;
   height: 28px;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .ad-top-lexcore .lexcore-logo-text strong {

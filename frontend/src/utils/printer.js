@@ -8,7 +8,7 @@ import {
 export const PRINTER_DEFAULTS = {
   printerName: "Counter Receipt Printer",
   printerType: "Both",
-  connection: "Browser",
+  connection: "QZ Tray",
   paperWidth: 80,
   copies: 1,
   autoPrintReceipt: true,
@@ -76,15 +76,12 @@ export async function printSaleBundle(order, receiptProfiles = {}) {
   // Use cached printer settings when available — avoid a network wait before print.
   if (!loaded) await loadPrinterSettings();
 
-  if (settings.connection !== "Browser") {
-    throw new Error(
-      "Only browser printing is available. Choose Browser in Settings → Printer."
-    );
-  }
-
-  if (typeof window === "undefined" || typeof window.print !== "function") {
+  if (typeof window === "undefined") {
     throw new Error("Printing is not supported in this browser.");
   }
+
+  const connection = String(settings.connection || "QZ Tray");
+  const allowBrowserFallback = connection === "Browser";
 
   const mode = String(receiptProfiles.mode || "both").toLowerCase();
   const options = {
@@ -92,6 +89,8 @@ export async function printSaleBundle(order, receiptProfiles = {}) {
     copies: Number(settings.copies) || 1,
     business: receiptProfiles.business,
     receipt: receiptProfiles.receipt,
+    printerName: settings.printerName || "",
+    allowBrowserFallback,
   };
 
   let sent = false;
@@ -105,7 +104,11 @@ export async function printSaleBundle(order, receiptProfiles = {}) {
   }
 
   if (!sent) {
-    throw new Error("The print dialog could not be opened.");
+    throw new Error(
+      allowBrowserFallback
+        ? "The print dialog could not be opened."
+        : "Direct print failed. Install QZ Tray from https://qz.io/download/, keep it running, and set the exact Printer Name in Settings."
+    );
   }
 
   const label =
@@ -115,7 +118,8 @@ export async function printSaleBundle(order, receiptProfiles = {}) {
         ? "KOT + bill"
         : "Bill";
 
-  return `${label} sent (${options.paperWidth}mm, ${options.copies} ${
+  const via = allowBrowserFallback ? "browser" : "direct";
+  return `${label} sent ${via} (${options.paperWidth}mm, ${options.copies} ${
     options.copies === 1 ? "copy" : "copies"
   })`;
 }

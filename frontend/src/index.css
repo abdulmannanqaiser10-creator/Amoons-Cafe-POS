@@ -5125,16 +5125,44 @@ textarea,
   color: inherit;
 }
 
-.lexcore-mark {
-  width: 36px;
-  height: 36px;
+.lexcore-mark,
+.lexcore-mark--png {
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
   display: block;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #0b1a33;
 }
 
-.lexcore-logo--compact .lexcore-mark {
-  width: 28px;
-  height: 28px;
+.lexcore-logo--compact .lexcore-mark,
+.lexcore-logo--compact .lexcore-mark--png {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+}
+
+.login-lexcore-badge .lexcore-logo,
+.login-lexcore-badge .lexcore-mark--png {
+  width: clamp(72px, 18vw, 104px);
+  height: clamp(72px, 18vw, 104px);
+}
+
+.login-lexcore-badge .lexcore-mark--png {
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(11, 26, 51, 0.28);
+}
+
+.brand-head--lexcore .lexcore-logo,
+.brand-head--lexcore .lexcore-mark--png {
+  width: clamp(56px, 9vw, 78px);
+  height: clamp(56px, 9vw, 78px);
+}
+
+.brand-head--lexcore .lexcore-mark--png {
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .lexcore-logo-text {
