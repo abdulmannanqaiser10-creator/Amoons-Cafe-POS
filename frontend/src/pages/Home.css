@@ -1,9 +1,19 @@
+.dash-page.pos-page,
 .dash-page {
   --dash-ink: #27141b;
   --dash-line: rgba(74, 0, 29, 0.13);
   --pos-nav-h: 86px;
-  min-height: 100vh;
-  min-height: 100svh;
+  --dash-header-h: 96px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100svh;
+  max-height: 100vh;
+  max-height: 100svh;
+  min-height: 0;
+  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: hidden;
   background:
     radial-gradient(ellipse at 86% 0%, rgba(234, 244, 251, 0.55), transparent 30rem),
     linear-gradient(180deg, #faf7f4 0%, #fffdfb 58%, #f4eef1 100%);
@@ -47,9 +57,10 @@
 
 .dash-header {
   position: relative;
-  z-index: 2;
+  z-index: 6;
   display: flex;
-  min-height: 96px;
+  flex: 0 0 auto;
+  min-height: var(--dash-header-h);
   align-items: center;
   justify-content: space-between;
   gap: 20px;
@@ -241,17 +252,92 @@
   cursor: pointer;
 }
 
-.dash-page .dash-toolbar {
-  z-index: 2;
-  flex-wrap: nowrap;
-  gap: 9px;
-  overflow-x: auto;
-  padding: 18px 30px 0;
-  scrollbar-width: none;
+.dash-brand {
+  flex-wrap: wrap;
+  gap: 10px 14px;
 }
 
-.dash-page .dash-toolbar::-webkit-scrollbar {
-  display: none;
+.dash-header-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: min(320px, 42vw);
+  min-width: 180px;
+  height: 42px;
+  margin-left: 8px;
+  padding: 0 14px;
+  border: 1px solid rgba(82, 29, 88, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.dash-header-search .pos-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.88rem;
+  outline: none;
+}
+
+.dash-header-search kbd {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid rgba(74, 0, 29, 0.22);
+  border-radius: 5px;
+  color: #5f4b65;
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.dash-page .dash-toolbar {
+  z-index: 5;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap !important;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 12px 30px;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.dash-page .dash-toolbar--categories {
+  position: relative;
+  z-index: 5;
+  flex: 0 0 auto;
+  flex-wrap: nowrap !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  background: rgba(255, 253, 251, 0.98);
+  border-bottom: 1px solid rgba(74, 0, 29, 0.1);
+  box-shadow: 0 4px 12px rgba(74, 0, 29, 0.05);
+}
+
+.dash-page .dash-toolbar--categories::-webkit-scrollbar {
+  height: 5px;
+}
+
+.dash-page .dash-toolbar--categories::-webkit-scrollbar-track {
+  background: rgba(74, 0, 29, 0.04);
+}
+
+.dash-page .dash-toolbar--categories::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(74, 0, 29, 0.28);
+}
+
+.dash-toolbar--categories .pos-chip {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .dash-toolbar .pos-search {
@@ -319,7 +405,11 @@
   align-items: start;
   gap: 12px;
   min-height: 0;
-  padding: 22px 22px 150px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: 18px 22px calc(var(--pos-nav-h) + 64px);
 }
 
 .dash-menu-btn {
@@ -438,10 +528,10 @@
 }
 
 .dash-lexcore-bar {
-  position: sticky;
-  bottom: calc(var(--dash-nav-h, 72px) + env(safe-area-inset-bottom, 0px));
-  z-index: 18;
+  position: relative;
+  z-index: 4;
   display: flex;
+  flex: 0 0 auto;
   justify-content: center;
   padding: 4px 12px 6px;
   pointer-events: none;
@@ -516,6 +606,7 @@
 
 .dash-page .dash-products {
   min-width: 0;
+  min-height: 0;
   padding: 0;
 }
 
@@ -1136,6 +1227,17 @@
 }
 
 @media (max-width: 820px) {
+  .dash-header-search {
+    order: 3;
+    width: 100%;
+    min-width: 0;
+    margin: 8px 0 0;
+  }
+
+  .dash-header-search kbd {
+    display: none;
+  }
+
   .dash-header {
     min-height: 88px;
     flex-wrap: wrap;
@@ -1191,14 +1293,16 @@
     display: none;
   }
 
-  .dash-page .dash-toolbar {
-    padding: 14px 16px 0;
+  .dash-page .dash-toolbar,
+  .dash-page .dash-toolbar--categories {
+    flex-wrap: nowrap !important;
+    padding: 10px 16px;
   }
 
   .dash-workspace {
     grid-template-columns: minmax(0, 1fr);
     gap: 18px;
-    padding: 18px 16px 122px;
+    padding: 14px 16px calc(var(--pos-nav-h) + 48px);
   }
 
   .dash-page .pos-grid {
@@ -1295,9 +1399,11 @@
     text-overflow: ellipsis;
   }
 
-  .dash-page .dash-toolbar {
+  .dash-page .dash-toolbar,
+  .dash-page .dash-toolbar--categories {
+    flex-wrap: nowrap !important;
     gap: 7px;
-    padding: 12px 12px 0;
+    padding: 10px 12px;
   }
 
   .dash-toolbar .pos-search {

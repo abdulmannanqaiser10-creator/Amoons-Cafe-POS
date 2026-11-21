@@ -1,6 +1,24 @@
 import { DELIVERY_CHANNELS } from "../data/orderConstants";
 import { formatMoney } from "./format";
 
+/** Till tax by payment method — Cash 15%, Card 8%. */
+export const PAYMENT_TAX_RATES = {
+  Cash: 15,
+  Card: 8,
+};
+
+export function paymentTaxProfile(paymentMethod, baseTax = null) {
+  const method = paymentMethod === "Card" ? "Card" : "Cash";
+  const rate = PAYMENT_TAX_RATES[method];
+  return {
+    enabled: true,
+    rate,
+    inclusive: Boolean(baseTax?.inclusive),
+    label: method === "Card" ? "Card tax" : "GST",
+    paymentMethod: method,
+  };
+}
+
 export function lineTotal(item) {
   return round2(Number(item?.price || 0) * Number(item?.quantity || 0));
 }

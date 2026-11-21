@@ -21,8 +21,12 @@ import {
   UserIcon,
 } from "../components/Icons";
 import { PageNotice } from "../components/PosPageUi";
-import { applyPrinterSettings, PRINTER_DEFAULTS, testSample } from "../utils/printer";
-import { printReceipt } from "../utils/receipt";
+import {
+  applyPrinterSettings,
+  PRINTER_DEFAULTS,
+  printSaleBundle,
+  testSample,
+} from "../utils/printer";
 import {
   DISPLAY_DEFAULTS,
   FONT_SIZE_OPTIONS,
@@ -76,6 +80,8 @@ function Settings() {
   const [prefs, setPrefs] = useState(getDisplayPreferences);
   const [printer, setPrinter] = useState({ ...PRINTER_DEFAULTS });
   const [printerCapabilities, setPrinterCapabilities] = useState(null);
+  const [menuCategories, setMenuCategories] = useState([]);
+  const [printerBusy, setPrinterBusy] = useState(false);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState(null);
@@ -89,9 +95,10 @@ function Settings() {
     setStatus("loading");
     setError("");
     try {
-      const [identity, printerResult] = await Promise.all([
+      const [identity, printerResult, menu] = await Promise.all([
         authApi.me(),
         settingsApi.getPrinter(),
+        menuApi.get().catch(() => ({ categories: [] })),
       ]);
       const saved = getDisplayPreferences();
       setUser(identity);
@@ -103,6 +110,7 @@ function Settings() {
       });
       setPrinter(printerResult.printer);
       setPrinterCapabilities(printerResult.capabilities);
+      setMenuCategories((menu.categories || []).map((c) => c.name).filter(Boolean));
       setPhoto(
         localStorage.getItem(PROFILE_PHOTO_KEY) ||
           localStorage.getItem(LEGACY_PROFILE_PHOTO_KEY) ||
@@ -194,23 +202,85 @@ function Settings() {
     }
   };
 
+  const patchPrinter = (patch) => setPrinter((current) => ({ ...current, ...patch }));
+
+  const patchCashier = (key, patch) =>
+    setPrinter((current) => ({
+      ...current,
+      [key]: { ...(current[key] || {}), ...patch },
+    }));
+
+  const connectNetworkPrinter = async (cashierKey = "frontCashier") => {
+    setPrinterBusy(true);
+    try {
+      const cashier = printer[cashierKey] || {};
+      const host = String(cashier.networkHost || printer.networkHost || "").trim();
+      if (!host) throw new Error("Enter the printer IP address.");
+      const port = Number(cashier.networkPort || printer.networkPort) || 9100;
+      const { probeNetworkPrinter } = await import("../utils/printTransport");
+      const result = await probeNetworkPrinter(host, port);
+      patchCashier(cashierKey, {
+        networkHost: host,
+        networkPort: port,
+        enabled: true,
+      });
+      patchPrinter({
+        connection: "Network",
+        connectionStatus: "connected",
+        lastError: "",
+        networkHost: cashierKey === "frontCashier" ? host : printer.networkHost,
+        networkPort: cashierKey === "frontCashier" ? port : printer.networkPort,
+      });
+      showNotice(
+        "success",
+        `${cashier.label || "Printer"} connected (${result.target}). Save Changes, then Test Receipt.`
+      );
+    } catch (problem) {
+      patchPrinter({
+        connectionStatus: "error",
+        lastError: errorMessage(problem, problem.message || "Network connect failed."),
+      });
+      showNotice(
+        "error",
+        errorMessage(
+          problem,
+          problem.message || "Could not reach the printer. Start the Local Print Agent or use the Android APK."
+        )
+      );
+    } finally {
+      setPrinterBusy(false);
+    }
+  };
+
   const testPrinter = async () => {
     setBusy(true);
+    setPrinterBusy(true);
     try {
+      applyPrinterSettings(printer);
       const menu = await menuApi.get();
+      setMenuCategories((menu.categories || []).map((c) => c.name).filter(Boolean));
       const sample = testSample(menu.products || []);
-      const sent = await printReceipt(sample, {
-        paperWidth: Number(printer.paperWidth),
-        copies: Number(printer.copies),
+      const message = await printSaleBundle(sample, {
+        mode: "bill",
         business: menu.business,
         receipt: menu.receipt,
       });
-      if (!sent) throw new Error("Printing is not available in this browser.");
-      showNotice("success", "A test receipt was opened in the browser print dialog.");
+      patchPrinter({ connectionStatus: "connected", lastError: "" });
+      const saved = await settingsApi.savePrinter({
+        ...printer,
+        connectionStatus: "connected",
+        lastError: "",
+      });
+      setPrinter(saved.printer);
+      applyPrinterSettings(saved.printer);
+      showNotice("success", message || "Test receipt sent to the printer.");
     } catch (problem) {
-      showNotice("error", errorMessage(problem, problem.message || "Could not open the test receipt."));
+      const text = errorMessage(problem, problem.message || "Could not print the test receipt.");
+      patchPrinter({ connectionStatus: "error", lastError: text });
+      showNotice("error", text);
     } finally {
       setBusy(false);
+      setPrinterBusy(false);
     }
   };
 
@@ -418,20 +488,215 @@ function Settings() {
             {tab === "printer" ? (
               <>
                 <h2>Printer Settings</h2>
-                <div className="mp-settings-form">
-                  <Field label="Printer Name"><input maxLength="60" value={printer.printerName} onChange={(event) => setPrinter({ ...printer, printerName: event.target.value })} /></Field>
-                  <Field label="Printer Type"><select value={printer.printerType} onChange={(event) => setPrinter({ ...printer, printerType: event.target.value })}>{["Receipt", "Kitchen", "Both"].map((item) => <option key={item}>{item}</option>)}</select></Field>
-                  <Field label="Connection"><select value={printer.connection} onChange={(event) => setPrinter({ ...printer, connection: event.target.value })}>{(printerCapabilities?.connections || [{ id: "Browser", available: true }]).map((connection) => <option key={connection.id} value={connection.id} disabled={!connection.available}>{connection.id}{connection.available ? "" : " (agent unavailable)"}</option>)}</select></Field>
-                  <Field label="Paper Width"><select value={printer.paperWidth} onChange={(event) => setPrinter({ ...printer, paperWidth: Number(event.target.value) })}><option value="58">58 mm</option><option value="80">80 mm</option></select></Field>
-                  <Field label="Copies"><select value={printer.copies} onChange={(event) => setPrinter({ ...printer, copies: Number(event.target.value) })}>{[1, 2, 3, 4, 5].map((number) => <option key={number} value={number}>{number}</option>)}</select></Field>
+                <p className="mp-settings-description">
+                  Connect your network thermal printer, choose paper size, then test. Status:{" "}
+                  <strong>
+                    {printer.connectionStatus === "connected"
+                      ? "Connected"
+                      : printer.connectionStatus === "error"
+                        ? "Error"
+                        : "Not checked"}
+                  </strong>
+                  {printer.lastError ? ` — ${printer.lastError}` : ""}
+                </p>
+
+                <div className="mp-settings-card">
+                  <h3>1. Connect printer</h3>
+                  <p className="mp-settings-description">Enter the printer IP (port 9100). Use Detect to verify it is online.</p>
+                  <div className="mp-settings-form">
+                    <Field label="Printer IP address">
+                      <input
+                        maxLength="120"
+                        placeholder="192.168.1.50"
+                        value={printer.frontCashier?.networkHost || printer.networkHost || ""}
+                        onChange={(event) => {
+                          patchCashier("frontCashier", { networkHost: event.target.value, enabled: true });
+                          patchPrinter({ networkHost: event.target.value, connection: "Network" });
+                        }}
+                      />
+                    </Field>
+                    <Field label="Port">
+                      <input
+                        type="number"
+                        min="1"
+                        max="65535"
+                        value={printer.frontCashier?.networkPort || printer.networkPort || 9100}
+                        onChange={(event) => {
+                          const port = Number(event.target.value) || 9100;
+                          patchCashier("frontCashier", { networkPort: port });
+                          patchPrinter({ networkPort: port });
+                        }}
+                      />
+                    </Field>
+                    <Field label="Label (optional)" wide>
+                      <input
+                        maxLength="60"
+                        value={printer.frontCashier?.printerName || printer.printerName || ""}
+                        onChange={(event) => {
+                          patchCashier("frontCashier", { printerName: event.target.value });
+                          patchPrinter({ printerName: event.target.value });
+                        }}
+                        placeholder="Front counter printer"
+                      />
+                    </Field>
+                  </div>
+                  <div className="mp-settings-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <button type="button" className="om-btn om-btn--ghost" onClick={() => connectNetworkPrinter("frontCashier")} disabled={busy || printerBusy}>
+                      {printerBusy ? "Checking…" : "Detect printer"}
+                    </button>
+                    <button type="button" className="om-btn om-btn--ghost" onClick={testPrinter} disabled={busy || printerBusy}>
+                      <ReceiptIcon className="om-btn-icon" /> Test print
+                    </button>
+                  </div>
                 </div>
-                <div className="mp-settings-switches">
-                  <Switch label="Auto Print Receipt" checked={printer.autoPrintReceipt} onChange={(value) => setPrinter({ ...printer, autoPrintReceipt: value })} />
-                  <Switch label="Auto Print Kitchen Ticket" checked={printer.autoPrintKitchen} onChange={(value) => setPrinter({ ...printer, autoPrintKitchen: value })} />
-                  <Switch label="Voice Alert for New Orders" checked={printer.voiceAlert} onChange={(value) => setPrinter({ ...printer, voiceAlert: value })} />
+
+                <div className="mp-settings-card">
+                  <h3>2. Paper & print style</h3>
+                  <div className="mp-settings-form">
+                    <Field label="Paper size">
+                      <select
+                        value={printer.paperWidth}
+                        onChange={(event) =>
+                          patchPrinter({
+                            paperWidth:
+                              event.target.value === "custom"
+                                ? "custom"
+                                : Number(event.target.value),
+                          })
+                        }
+                      >
+                        <option value="58">58 mm</option>
+                        <option value="80">80 mm</option>
+                        <option value="custom">Custom width</option>
+                      </select>
+                    </Field>
+                    {printer.paperWidth === "custom" ? (
+                      <Field label="Custom width (mm)">
+                        <input
+                          type="number"
+                          min="40"
+                          max="120"
+                          value={printer.customPaperWidthMm || 80}
+                          onChange={(event) =>
+                            patchPrinter({ customPaperWidthMm: Number(event.target.value) || 80 })
+                          }
+                        />
+                      </Field>
+                    ) : null}
+                    <Field label="Font size">
+                      <select value={printer.fontSize || "large"} onChange={(event) => patchPrinter({ fontSize: event.target.value })}>
+                        <option value="small">Small</option>
+                        <option value="normal">Normal</option>
+                        <option value="large">Large</option>
+                        <option value="xlarge">Extra large</option>
+                      </select>
+                    </Field>
+                    <Field label="Alignment">
+                      <select value={printer.alignment || "center"} onChange={(event) => patchPrinter({ alignment: event.target.value })}>
+                        <option value="left">Left</option>
+                        <option value="center">Center</option>
+                        <option value="right">Right</option>
+                      </select>
+                    </Field>
+                    <Field label="Print speed">
+                      <select value={printer.printSpeed || "normal"} onChange={(event) => patchPrinter({ printSpeed: event.target.value })}>
+                        <option value="slow">Slow</option>
+                        <option value="normal">Normal</option>
+                        <option value="fast">Fast</option>
+                      </select>
+                    </Field>
+                    <Field label="Print density">
+                      <select value={printer.printDensity || "normal"} onChange={(event) => patchPrinter({ printDensity: event.target.value })}>
+                        <option value="light">Light</option>
+                        <option value="normal">Normal</option>
+                        <option value="dark">Dark</option>
+                      </select>
+                    </Field>
+                    <Field label="Copies">
+                      <select value={printer.copies} onChange={(event) => patchPrinter({ copies: Number(event.target.value) })}>
+                        {[1, 2, 3, 4, 5].map((number) => <option key={number} value={number}>{number}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="mp-settings-switches">
+                    <Switch label="Bold text" checked={printer.boldText !== false} onChange={(value) => patchPrinter({ boldText: value })} />
+                    <Switch label="Cut paper after print" checked={printer.cutPaper !== false} onChange={(value) => patchPrinter({ cutPaper: value })} />
+                    <Switch label="Auto print bill" checked={printer.autoPrintReceipt} onChange={(value) => patchPrinter({ autoPrintReceipt: value })} />
+                    <Switch label="Auto print KOT" checked={printer.autoPrintKitchen} onChange={(value) => patchPrinter({ autoPrintKitchen: value })} />
+                  </div>
                 </div>
-                <p className="mp-settings-note"><PrinterIcon /> {printerCapabilities?.silentPrinting ? "Direct printing uses QZ Tray (install from qz.io, keep it running, set Printer Name to your thermal printer). Avoid Browser connection — that opens Chrome's print dialog." : "Printing uses the browser print dialog."}</p>
-                <button type="button" className="om-btn om-btn--ghost" onClick={testPrinter} disabled={busy}><ReceiptIcon className="om-btn-icon" /> Test Receipt</button>
+
+                <div className="mp-settings-card">
+                  <h3>3. Back cashier (optional)</h3>
+                  <p className="mp-settings-description">Send selected category KOTs to a second kitchen printer.</p>
+                  <div className="mp-settings-switches">
+                    <Switch
+                      label="Enable back cashier printer"
+                      checked={Boolean(printer.backCashier?.enabled)}
+                      onChange={(value) => patchCashier("backCashier", { enabled: value })}
+                    />
+                  </div>
+                  {printer.backCashier?.enabled ? (
+                    <>
+                      <div className="mp-settings-form">
+                        <Field label="Back printer IP">
+                          <input
+                            maxLength="120"
+                            placeholder="192.168.1.51"
+                            value={printer.backCashier?.networkHost || ""}
+                            onChange={(event) => patchCashier("backCashier", { networkHost: event.target.value })}
+                          />
+                        </Field>
+                        <Field label="Port">
+                          <input
+                            type="number"
+                            min="1"
+                            max="65535"
+                            value={printer.backCashier?.networkPort || 9100}
+                            onChange={(event) => patchCashier("backCashier", { networkPort: Number(event.target.value) || 9100 })}
+                          />
+                        </Field>
+                      </div>
+                      <fieldset className="mp-settings-categories">
+                        <legend>Categories printed on back cashier</legend>
+                        <div className="mp-settings-category-grid">
+                          {menuCategories.length === 0 ? (
+                            <p className="mp-settings-description">No categories loaded yet.</p>
+                          ) : (
+                            menuCategories.map((name) => {
+                              const checked = (printer.backCashier?.categories || []).includes(name);
+                              return (
+                                <label key={name} className="mp-settings-category">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => {
+                                      const current = printer.backCashier?.categories || [];
+                                      const next = event.target.checked
+                                        ? [...current, name]
+                                        : current.filter((item) => item !== name);
+                                      patchCashier("backCashier", { categories: next });
+                                    }}
+                                  />
+                                  <span>{name}</span>
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
+                      </fieldset>
+                      <div className="mp-settings-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <button type="button" className="om-btn om-btn--ghost" onClick={() => connectNetworkPrinter("backCashier")} disabled={busy || printerBusy}>
+                          {printerBusy ? "Checking…" : "Detect back printer"}
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+
+                <p className="mp-settings-note">
+                  <PrinterIcon /> Printing is direct to the printer IP (no browser dialog). On Windows, keep the Local Print Agent running; on Android use the Amoons APK.
+                </p>
               </>
             ) : null}
 

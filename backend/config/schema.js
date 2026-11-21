@@ -204,6 +204,7 @@ const STEPS = [
       CREATE INDEX IF NOT EXISTS idx_shifts_branch ON shifts (branch_id);
 
       ALTER TABLE shifts ADD COLUMN IF NOT EXISTS closing_report JSONB;
+      ALTER TABLE shifts ADD COLUMN IF NOT EXISTS opening_report JSONB;
 
       CREATE TABLE IF NOT EXISTS cash_pulls (
         id         SERIAL PRIMARY KEY,

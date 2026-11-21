@@ -348,7 +348,7 @@ function CurrentOrder({
           {taxAmount > 0 ? (
             <div className="ord-tally-row">
               <span className="ord-tally-label">
-                {tax?.label || "GST"} ({rate}%)
+                {tax?.label || (form?.paymentMethod === "Card" ? "Card tax" : "GST")} ({rate}%)
               </span>
               <span className="ord-tally-value">{formatMoney(taxAmount)}</span>
             </div>

@@ -353,13 +353,19 @@ const ORDER_SELECT = `
 `;
 
 /**
- * The tax profile lives in settings, so every order is priced with the rule
- * the manager set at the time it was written. The rate and amount are stored
- * on the order to keep old bills reproducible after the settings change.
+ * Till tax is payment-method based: Cash 15%, Card 8%.
+ * Inclusive flag (if ever enabled) still comes from tax settings.
+ * Rate/amount are stored on the order so old bills stay reproducible.
  */
-async function taxOf(subtotal, client = db) {
+async function taxOf(subtotal, client = db, paymentMethod = "Cash") {
   const { value } = await readSettings("tax", client);
-  return applyTax(subtotal, value);
+  const rate = String(paymentMethod) === "Card" ? 8 : 15;
+  return applyTax(subtotal, {
+    ...(value || {}),
+    enabled: true,
+    rate,
+    inclusive: false,
+  });
 }
 
 async function insertLines(client, orderId, items) {
@@ -679,7 +685,7 @@ exports.create = async (req, res) => {
         return badRequest(res, discount.error);
       }
 
-      const tax = await taxOf(discount.after, client);
+      const tax = await taxOf(discount.after, client, paymentMethod);
       const total = tax.total;
 
       const amountPaid = Math.min(
@@ -888,7 +894,7 @@ exports.update = async (req, res) => {
         return badRequest(res, discount.error);
       }
 
-      const tax = await taxOf(discount.after, client);
+      const tax = await taxOf(discount.after, client, paymentMethod);
       const recalculatedTotal = tax.total;
       const recalculatedTaxAmount = tax.taxAmount;
       const recalculatedTaxRate = tax.rate;

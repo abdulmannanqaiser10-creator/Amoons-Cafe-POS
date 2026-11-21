@@ -122,6 +122,7 @@ function mapShift(row) {
     openedAt: row.opened_at,
     closedAt: row.closed_at,
     closingReport: row.closing_report || null,
+    openingReport: row.opening_report || null,
     totals: {
       bookedOrders: row.booked_orders,
       orderCount: row.order_count,
@@ -385,6 +386,30 @@ exports.open = async (req, res) => {
 
     const openingCash = Math.max(0, round(rawOpening ?? 0));
 
+    const openingDenominations = Array.isArray(body.denominations)
+      ? body.denominations
+          .map((row) => ({
+            value: round(row?.value),
+            count: Math.max(0, Math.trunc(Number(row?.count) || 0)),
+          }))
+          .filter((row) => row.value > 0 && row.count > 0)
+      : [];
+
+    const openingDenominationTotal = round(
+      openingDenominations.reduce((sum, row) => sum + row.value * row.count, 0)
+    );
+
+    // When denominations are provided, opening cash must match the counted drawer.
+    if (
+      openingDenominations.length > 0 &&
+      Math.abs(openingDenominationTotal - openingCash) > 0.009
+    ) {
+      return badRequest(
+        res,
+        `Opening cash (${openingCash}) must equal denomination total (${openingDenominationTotal})`
+      );
+    }
+
     const branchId = Math.trunc(toNumber(body.branchId)) || null;
 
     const branch = branchId
@@ -411,13 +436,21 @@ exports.open = async (req, res) => {
       });
     }
 
+    const openingReport = {
+      generatedAt: new Date().toISOString(),
+      openingCash,
+      denominations: openingDenominations,
+      denominationTotal: openingDenominationTotal,
+      notes: String(body.notes ?? "").trim().slice(0, 500) || null,
+    };
+
     const result = await db.query(
       `INSERT INTO shifts
-         (shift_number, branch_id, employee_id, status, opening_cash, notes)
+         (shift_number, branch_id, employee_id, status, opening_cash, notes, opening_report)
        VALUES (
          'SH-' || to_char(now(), 'YYMMDD') || '-' ||
            lpad(nextval('shift_number_seq')::text, 5, '0'),
-         $1, $2, 'Open', $3, $4
+         $1, $2, 'Open', $3, $4, $5::jsonb
        )
        RETURNING id`,
       [
@@ -425,6 +458,7 @@ exports.open = async (req, res) => {
         req.user.id,
         openingCash,
         String(body.notes ?? "").trim().slice(0, 500) || null,
+        JSON.stringify(openingReport),
       ]
     );
 
@@ -496,6 +530,20 @@ exports.close = async (req, res) => {
     const denominationTotal = round(
       denominations.reduce((sum, row) => sum + row.value * row.count, 0)
     );
+
+    // Actual cash must be explained by the denomination count (no unexplained amounts).
+    if (!denominations.length) {
+      return badRequest(
+        res,
+        "Count the drawer denominations. Actual cash must match the counted notes."
+      );
+    }
+    if (Math.abs(denominationTotal - closingCash) > 0.009) {
+      return badRequest(
+        res,
+        `Actual cash (${closingCash}) must equal denomination total (${denominationTotal})`
+      );
+    }
 
     const closedAt = new Date().toISOString();
     const durationMs = Math.max(

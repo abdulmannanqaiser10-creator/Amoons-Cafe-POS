@@ -1513,7 +1513,66 @@ html[data-show-nav="hidden"] .dash-nav {
 .mp-settings-panel h2 {
   margin: 0 0 16px;
   color: #55152c;
-  font: 700 1.2rem "Roboto", Arial, sans-serif;
+  font: 700 1.2rem "Manrope", "Segoe UI", sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.mp-settings-panel h3 {
+  margin: 0 0 6px;
+  color: #55152c;
+  font: 700 1rem "Manrope", "Segoe UI", sans-serif;
+}
+
+.mp-settings-card {
+  margin: 0 0 18px;
+  padding: 16px;
+  border: 1px solid rgba(213, 74, 126, 0.14);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffdfb, #fff8fc);
+}
+
+.mp-settings-categories {
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px dashed rgba(189, 22, 77, 0.25);
+  border-radius: 12px;
+}
+
+.mp-settings-categories legend {
+  padding: 0 6px;
+  color: #72001f;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.mp-settings-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.mp-settings-category {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid rgba(213, 74, 126, 0.16);
+  border-radius: 10px;
+  background: #fff;
+  color: #45101f;
+  font-size: 0.84rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.mp-settings-layout {
+  align-items: start;
+}
+
+.mp-settings-tabs {
+  position: sticky;
+  top: 12px;
 }
 
 .mp-settings-form {

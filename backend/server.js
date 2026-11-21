@@ -70,7 +70,7 @@ app.use("/api/menu", menuRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/website", websiteRoutes);
-app.use("/api/qz", require("./routes/qzRoutes"));
+app.use("/api/digital-menu", require("./routes/digitalMenuRoutes"));
 
 app.get("/api/home", verifyToken, (req, res) => {
   res.json({

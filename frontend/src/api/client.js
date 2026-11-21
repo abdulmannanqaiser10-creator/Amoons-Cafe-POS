@@ -38,10 +38,14 @@ export function errorMessage(error, fallback = "Something went wrong") {
   if (error?.response?.data?.message) return error.response.data.message;
   if (error?.response?.data?.error) return error.response.data.error;
   if (error?.code === "ECONNABORTED") return "The request timed out.";
-  if (!error?.response) return "Unable to reach the server.";
+  // Axios network failure (request was sent, no response).
+  if (error?.isAxiosError && error?.request && !error?.response) {
+    return "Unable to reach the server.";
+  }
   if (error?.message && !/^Request failed with status code \d+$/i.test(error.message)) {
     return error.message;
   }
+  if (!error?.response && error?.request) return "Unable to reach the server.";
 
   return fallback;
 }

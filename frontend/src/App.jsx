@@ -11,6 +11,7 @@ import OrderReversal from "./pages/OrderReversal";
 import ShiftReport from "./pages/ShiftReport";
 import Settings from "./pages/Settings";
 import Help from "./pages/Help";
+import DigitalMenu from "./pages/digital-menu/DigitalMenu";
 import { applyDisplayPreferences } from "./utils/preferences";
 import "./pages/ModulePages.css";
 
@@ -29,6 +30,7 @@ const PAGE_TITLES = [
   ["/admin/menu", "Menu Management"],
   ["/admin/categories", "Categories"],
   ["/admin/inventory", "Inventory"],
+  ["/admin/tables", "Tables"],
   ["/admin/customers", "Customers"],
   ["/admin/staff", "Staff"],
   ["/admin/rewards", "Rewards"],
@@ -40,6 +42,11 @@ function useDocumentTitle() {
   const { pathname } = useLocation();
 
   useEffect(() => {
+    if (/^\/Digitalmenu-t[1-4]\/?$/i.test(pathname)) {
+      document.title = "Amoons — Digital Menu";
+      return;
+    }
+
     const match =
       PAGE_TITLES.find(([path]) => path === pathname) ??
       (pathname.startsWith("/admin") ? [null, "Manager"] : [null, "Till"]);
@@ -65,6 +72,16 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Login />} />
+
+      {/* Public QR digital menus — must stay before the catch-all */}
+      <Route path="/Digitalmenu-t1" element={<DigitalMenu />} />
+      <Route path="/Digitalmenu-t1/" element={<DigitalMenu />} />
+      <Route path="/Digitalmenu-t2" element={<DigitalMenu />} />
+      <Route path="/Digitalmenu-t2/" element={<DigitalMenu />} />
+      <Route path="/Digitalmenu-t3" element={<DigitalMenu />} />
+      <Route path="/Digitalmenu-t3/" element={<DigitalMenu />} />
+      <Route path="/Digitalmenu-t4" element={<DigitalMenu />} />
+      <Route path="/Digitalmenu-t4/" element={<DigitalMenu />} />
 
       <Route
         path="/home"

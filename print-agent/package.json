@@ -1,0 +1,18 @@
+{
+  "name": "amoons-print-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Windows print agent for Amoons Soft-POS (RAW TCP 9100)",
+  "main": "server.js",
+  "bin": {
+    "amoons-print-agent": "./server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "install-service": "node scripts/install-windows-service.js",
+    "uninstall-service": "node scripts/uninstall-windows-service.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

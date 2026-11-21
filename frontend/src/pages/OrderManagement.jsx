@@ -6,7 +6,6 @@ import {
   companyApi,
   ordersApi,
   errorMessage,
-  settingsApi,
 } from "../api/client";
 import ConfirmDialog from "../components/orders/ConfirmDialog";
 import OmModal from "../components/orders/OmModal";
@@ -42,8 +41,7 @@ import {
   PAYMENT_STATUSES,
 } from "../data/orderConstants";
 import { formatDateTime, formatMoney } from "../utils/format";
-import { playOrderAlertTone } from "../utils/printer";
-import { printReceipt } from "../utils/receipt";
+import { loadPrinterSettings, playOrderAlertTone, printSaleBundle } from "../utils/printer";
 import "./ModulePages.css";
 
 const INITIAL_FILTERS = {
@@ -213,8 +211,8 @@ function OrderManagement({ mode = "staff" } = {}) {
         throw new Error("This order has no line items to print.");
       }
 
-      const [settings, profile] = await Promise.all([
-        settingsApi.getPrinter().catch(() => ({ printer: { paperWidth: 80, copies: 1 } })),
+      const [printer, profile] = await Promise.all([
+        loadPrinterSettings(true),
         companyApi.get().catch(() => null),
       ]);
 
@@ -265,16 +263,15 @@ function OrderManagement({ mode = "staff" } = {}) {
         orderNumber: full.orderNumber,
       };
 
-      const sent = await printReceipt(receiptOrder, {
-        paperWidth: settings.printer?.paperWidth ?? 80,
-        copies: settings.printer?.copies ?? 1,
+      const message = await printSaleBundle(receiptOrder, {
+        mode: "bill",
         business: profile?.settings?.business,
         receipt: profile?.settings?.receipt,
       });
-      if (!sent) throw new Error("Printing is not available in this browser.");
       showNotice(
         "success",
-        `Complete receipt opened for ${full.orderNumber} (${items.length} items).`
+        message ||
+          `Receipt printed for ${full.orderNumber} (${items.length} items, ${printer?.paperWidth || 80}mm).`
       );
       await load({ silent: true });
       if (selected?.id === full.id) setSelected(full);

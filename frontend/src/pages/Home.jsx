@@ -26,6 +26,7 @@ import { useMenu } from "../components/MenuProvider";
 import {
   applyDiscountAndTax,
   computeSubtotal,
+  paymentTaxProfile,
   validateOrder,
 } from "../utils/orderMath";
 import { formatMoney } from "../utils/format";
@@ -597,11 +598,14 @@ function Home() {
 
   const cartSubtotal = computeSubtotal(cart);
 
+  // Payment-method tax: Cash 15%, Card 8% (mirrors server taxOf).
+  const paymentTax = paymentTaxProfile(orderForm.paymentMethod, tax);
+
   // Discount-aware bill for display (mirrors submitOrder calculation)
   const orderDiscount = orderForm.discountEnabled
     ? { enabled: true, type: orderForm.discountType, value: orderForm.discountValue, percentage: orderForm.discountPercentage }
     : null;
-  const orderBill = applyDiscountAndTax(cartSubtotal, orderDiscount, tax);
+  const orderBill = applyDiscountAndTax(cartSubtotal, orderDiscount, paymentTax);
 
   const changeOrderForm = (patch) => {
     setOrderForm((previous) => ({ ...previous, ...patch }));
@@ -746,7 +750,7 @@ function Home() {
     const bill = applyDiscountAndTax(
       cartSnapshot.reduce((sum, item) => sum + item.lineTotal, 0),
       discount,
-      tax
+      paymentTaxProfile(formSnapshot.paymentMethod, tax)
     );
     const total = bill.total;
 
@@ -1127,7 +1131,7 @@ function Home() {
             cart={cart}
             cartCount={cartCount}
             subtotal={cartSubtotal}
-            tax={tax}
+            tax={paymentTax}
             updateQuantity={updateQuantity}
             removeItem={removeItem}
             form={orderForm}
@@ -1240,6 +1244,20 @@ function Home() {
               </div>
             </>
           ) : null}
+
+          <label className="pos-search dash-header-search">
+            <SearchIcon className="pos-search-icon" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="pos-search-input"
+              placeholder="Search menu items..."
+              aria-label="Search products"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <kbd>Ctrl + K</kbd>
+          </label>
         </div>
 
         <div className="dash-header-meta">
@@ -1293,23 +1311,8 @@ function Home() {
         </div>
       </header>
 
-      {/* Search + category filters */}
-      <div className="pos-toolbar dash-toolbar">
-        <label className="pos-search">
-          <SearchIcon className="pos-search-icon" />
-
-          <input
-            ref={searchInputRef}
-            type="text"
-            className="pos-search-input"
-            placeholder="Search menu items..."
-            aria-label="Search products"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          <kbd>Ctrl + K</kbd>
-        </label>
-
+      {/* Categories: single horizontal row; products scroll below */}
+      <div className="pos-toolbar dash-toolbar dash-toolbar--categories" role="toolbar" aria-label="Menu categories">
         {categoryNames.map((category) => (
           <button
             key={category}
@@ -1320,7 +1323,14 @@ function Home() {
                 : ""
             }`}
             aria-pressed={selectedCategory === category}
-            onClick={() => setActiveCategory(category)}
+            onClick={(event) => {
+              setActiveCategory(category);
+              event.currentTarget.scrollIntoView({
+                behavior: "smooth",
+                inline: "center",
+                block: "nearest",
+              });
+            }}
           >
             <CategoryIcon category={category} />
             {category}

@@ -8,6 +8,7 @@ import MenuManagement from "./admin/MenuManagement";
 import Reports from "./admin/Reports";
 import Rewards from "./admin/Rewards";
 import Customers from "./admin/Customers";
+import Tables from "./admin/Tables";
 import StaffManagement from "./admin/StaffManagement";
 import BusinessSettings from "./admin/BusinessSettings";
 import Integrations from "./admin/Integrations";
@@ -25,6 +26,7 @@ import {
   CutleryIcon,
   FlagIcon,
   GearIcon,
+  MapPinIcon,
   PowerIcon,
   SearchIcon,
   TrendingIcon,
@@ -40,6 +42,7 @@ const NAV_ITEMS = [
   { to: "/admin/menu", label: "Menu Items", Glyph: CutleryIcon },
   { to: "/admin/categories", label: "Categories", Glyph: FlagIcon },
   { to: "/admin/inventory", label: "Inventory", Glyph: BagIcon },
+  { to: "/admin/tables", label: "Tables", Glyph: MapPinIcon },
   { to: "/admin/customers", label: "Customers", Glyph: UserIcon },
   { to: "/admin/rewards", label: "Rewards", Glyph: WalletIcon },
   { to: "/admin/reports", label: "Reports", Glyph: TrendingIcon },
@@ -353,6 +356,7 @@ function Admin() {
             <Route path="inventory" element={<InventoryManagement onChanged={sync} />} />
             <Route path="staff" element={<StaffManagement />} />
             <Route path="customers" element={<Customers />} />
+            <Route path="tables" element={<Tables />} />
             <Route path="rewards" element={<Rewards />} />
             <Route path="reports" element={<Reports />} />
             <Route path="settings" element={<BusinessSettings onChanged={sync} />} />

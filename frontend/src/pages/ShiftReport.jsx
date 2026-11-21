@@ -78,9 +78,14 @@ function ShiftReport() {
   const [closingCash, setClosingCash] = useState("");
   const [closingNotes, setClosingNotes] = useState("");
   const [denomCounts, setDenomCounts] = useState(() => emptyDenomCounts());
+  const [openingDenomCounts, setOpeningDenomCounts] = useState(() => emptyDenomCounts());
   const [openingCash, setOpeningCash] = useState("0");
   const [showOpening, setShowOpening] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const openingDenomTotal = useMemo(
+    () => denomTotal(openingDenomCounts),
+    [openingDenomCounts]
+  );
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setStatus("loading");
@@ -182,16 +187,37 @@ function ShiftReport() {
     }
   };
 
+  const updateOpeningDenomCount = (value, raw) => {
+    const cleaned = String(raw).replace(/[^\d]/g, "");
+    setOpeningDenomCounts((current) => ({ ...current, [value]: cleaned }));
+    const next = { ...openingDenomCounts, [value]: cleaned };
+    setOpeningCash(String(denomTotal(next)));
+  };
+
   const startShift = async () => {
-    const amount = Number(openingCash);
+    const denoms = denomPayload(openingDenomCounts);
+    const counted = denomTotal(openingDenomCounts);
+    const amount = denoms.length ? counted : Number(openingCash);
     if (!Number.isFinite(amount) || amount < 0) {
       setNotice({ type: "error", text: "Opening cash must be a non-negative amount." });
       return;
     }
+    if (denoms.length && Math.abs(counted - amount) > 0.009) {
+      setNotice({
+        type: "error",
+        text: "Opening cash must equal the denomination total.",
+      });
+      return;
+    }
     setBusy(true);
     try {
-      const result = await shiftsApi.open({ openingCash: amount });
+      const result = await shiftsApi.open({
+        openingCash: amount,
+        denominations: denoms,
+      });
       setShowOpening(false);
+      setOpeningDenomCounts(emptyDenomCounts());
+      setOpeningCash("0");
       setNotice({ type: "success", text: `${result.shift.shiftNumber} opened.` });
       await load({ silent: true });
     } catch (problem) {
@@ -208,8 +234,9 @@ function ShiftReport() {
       const detail = await shiftsApi.get(shift.id);
       const fresh = detail.shift;
       setClosingTarget(fresh);
+      // Actual cash comes only from counted denominations — never auto-fill from expected.
       setDenomCounts(emptyDenomCounts());
-      setClosingCash(String(Number(fresh.expectedCash || 0)));
+      setClosingCash("0");
       setClosingNotes("");
     } catch (problem) {
       setNotice({ type: "error", text: errorMessage(problem, "Could not load the shift for closing.") });
@@ -219,8 +246,10 @@ function ShiftReport() {
   };
 
   const updateDenomCount = (value, raw) => {
-    const next = { ...denomCounts, [value]: raw };
+    const cleaned = String(raw).replace(/[^\d]/g, "");
+    const next = { ...denomCounts, [value]: cleaned };
     setDenomCounts(next);
+    // Actual cash is locked to the denomination total (no unexplained overrides).
     setClosingCash(String(denomTotal(next)));
   };
 
@@ -234,17 +263,27 @@ function ShiftReport() {
   }, [closingTarget, closingCash, denomCounts, closingNotes]);
 
   const finishShift = async () => {
-    const amount = Number(closingCash);
+    const denoms = denomPayload(denomCounts);
+    const counted = denomTotal(denomCounts);
+    const amount = counted;
+    if (!denoms.length) {
+      setNotice({
+        type: "error",
+        text: "Count the drawer denominations. Actual cash must come from the note count.",
+      });
+      return;
+    }
     if (!Number.isFinite(amount) || amount < 0) {
       setNotice({ type: "error", text: "Enter the actual non-negative drawer cash." });
       return;
     }
+    setClosingCash(String(counted));
     setBusy(true);
     try {
       const result = await shiftsApi.close(closingTarget.id, {
-        closingCash: amount,
+        closingCash: counted,
         notes: closingNotes.trim(),
-        denominations: denomPayload(denomCounts),
+        denominations: denoms,
       });
       setClosingTarget(null);
       setDenomCounts(emptyDenomCounts());
@@ -354,7 +393,19 @@ function ShiftReport() {
             <p className="om-sub">View and analyze shift-wise sales, orders and activities.</p>
           </div>
           <div className="om-head-actions">
-            {canStart ? <button type="button" className="om-btn om-btn--primary" onClick={() => setShowOpening(true)}><PlusIcon className="om-btn-icon" /> Start Shift</button> : null}
+            {canStart ? (
+              <button
+                type="button"
+                className="om-btn om-btn--primary"
+                onClick={() => {
+                  setOpeningDenomCounts(emptyDenomCounts());
+                  setOpeningCash("0");
+                  setShowOpening(true);
+                }}
+              >
+                <PlusIcon className="om-btn-icon" /> Start Shift
+              </button>
+            ) : null}
             <button type="button" className="om-btn om-btn--ghost" onClick={() => load()} disabled={status === "loading"}><RefreshIcon className={`om-btn-icon${status === "loading" ? " om-spin" : ""}`} /> Refresh</button>
             <button type="button" className="om-btn om-btn--ghost" onClick={exportReport} disabled={exporting}><DownloadIcon className="om-btn-icon" /> {exporting ? "Exporting…" : "Export Report"}</button>
           </div>
@@ -429,14 +480,74 @@ function ShiftReport() {
         <PageNotice notice={notice} onDismiss={() => setNotice(null)} />
 
         {showOpening ? (
-          <OmModal title="Start a shift" subtitle="Record the real opening float for this drawer." onClose={() => setShowOpening(false)} footer={
-            <>
-              <button type="button" className="om-btn om-btn--ghost" onClick={() => setShowOpening(false)} disabled={busy}>Cancel</button>
-              <button type="button" className="om-btn om-btn--primary" onClick={startShift} disabled={busy}>{busy ? "Starting…" : "Start shift"}</button>
-            </>
-          }>
-            <label className="mp-modal-field">Opening cash
-              <input className="om-input" type="number" min="0" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} />
+          <OmModal
+            title="Start a shift"
+            subtitle="Count the opening float by note. Total updates automatically."
+            size="lg"
+            onClose={() => setShowOpening(false)}
+            footer={
+              <>
+                <button type="button" className="om-btn om-btn--ghost" onClick={() => setShowOpening(false)} disabled={busy}>Cancel</button>
+                <button type="button" className="om-btn om-btn--primary" onClick={startShift} disabled={busy}>{busy ? "Starting…" : "Start shift"}</button>
+              </>
+            }
+          >
+            <section className="mp-close-panel" aria-label="Opening cash denomination counter">
+              <div className="mp-close-panel-head">
+                <h3>Cash denomination counter</h3>
+                <p>Enter the quantity of each note. Opening cash is calculated from the counts.</p>
+              </div>
+              <div className="mp-denom-table-wrap">
+                <table className="mp-denom-table">
+                  <thead>
+                    <tr>
+                      <th>Note</th>
+                      <th>Count</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {CASH_DENOMINATIONS.map((value) => {
+                      const count = Math.max(0, Math.trunc(Number(openingDenomCounts[value]) || 0));
+                      return (
+                        <tr key={value}>
+                          <td>Rs. {value.toLocaleString("en-US")}</td>
+                          <td>
+                            <input
+                              className="om-input mp-denom-input"
+                              type="number"
+                              min="0"
+                              step="1"
+                              inputMode="numeric"
+                              value={openingDenomCounts[value]}
+                              onChange={(event) => updateOpeningDenomCount(value, event.target.value)}
+                              aria-label={`Opening count of Rs ${value} notes`}
+                            />
+                          </td>
+                          <td>{formatMoney(value * count)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan="2">Opening cash total</td>
+                      <td>{formatMoney(openingDenomTotal)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
+            <label className="mp-modal-field" style={{ marginTop: 12 }}>
+              Opening cash (override)
+              <input
+                className="om-input"
+                type="number"
+                min="0"
+                step="0.01"
+                value={openingCash}
+                onChange={(event) => setOpeningCash(event.target.value)}
+              />
             </label>
           </OmModal>
         ) : null}
@@ -549,14 +660,15 @@ function ShiftReport() {
                   <p><span>Cash pulls / expenses</span><strong>{formatMoney(closingTarget.totals.pullTotal)}</strong></p>
                   <p><span>Expected cash</span><strong>{formatMoney(closingPreview.expectedCash)}</strong></p>
                   <label className="mp-modal-field">
-                    Actual cash
+                    Actual cash (from denomination count)
                     <input
                       className="om-input"
                       type="number"
                       min="0"
                       step="0.01"
                       value={closingCash}
-                      onChange={(event) => setClosingCash(event.target.value)}
+                      readOnly
+                      title="Actual cash is calculated from the note counts above"
                     />
                   </label>
                   <p className={`mp-close-diff mp-close-diff--${closingPreview.difference === 0 ? "ok" : closingPreview.difference > 0 ? "over" : "short"}`}>
