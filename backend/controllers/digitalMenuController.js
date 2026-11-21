@@ -174,13 +174,14 @@ async function taxOf(subtotal, paymentMethod, client = db) {
   });
 }
 
-async function findMemberByPhone(client, digits) {
+async function findMemberByPhone(client, digits, { forUpdate = false } = {}) {
+  const lock = forUpdate ? " FOR UPDATE" : "";
   let member = await client.query(
     `${MEMBER_SQL}
       WHERE regexp_replace(m.phone, '\\D', '', 'g') = $1
          OR regexp_replace(m.phone, '\\D', '', 'g') = $2
       ORDER BY m.id
-      FOR UPDATE`,
+      LIMIT 1${lock}`,
     [digits, digits.replace(/^92/, "0")]
   );
   if (!member.rowCount && digits.startsWith("92") && digits.length === 12) {
@@ -188,17 +189,17 @@ async function findMemberByPhone(client, digits) {
       `${MEMBER_SQL}
         WHERE regexp_replace(m.phone, '\\D', '', 'g') = $1
         ORDER BY m.id
-        FOR UPDATE`,
+        LIMIT 1${lock}`,
       [`0${digits.slice(2)}`]
     );
   }
   return member;
 }
 
-async function upsertMember(client, { name, phone }) {
+async function upsertMember(client, { name, phone, forUpdate = false }) {
   const { raw, digits } = normalizePhone(phone);
   if (!digits) return null;
-  let member = await findMemberByPhone(client, digits);
+  let member = await findMemberByPhone(client, digits, { forUpdate });
   if (!member.rowCount) {
     try {
       member = await client.query(
@@ -210,7 +211,7 @@ async function upsertMember(client, { name, phone }) {
       );
     } catch (error) {
       if (error.code === "23505") {
-        member = await findMemberByPhone(client, digits);
+        member = await findMemberByPhone(client, digits, { forUpdate });
       } else {
         throw error;
       }
@@ -222,11 +223,12 @@ async function upsertMember(client, { name, phone }) {
         WHERE id = $2`,
       [name, member.rows[0].id]
     );
-    member = await client.query(`${MEMBER_SQL} WHERE m.id = $1 FOR UPDATE`, [
-      member.rows[0].id,
-    ]);
+    member = await client.query(
+      `${MEMBER_SQL} WHERE m.id = $1${forUpdate ? " FOR UPDATE" : ""}`,
+      [member.rows[0].id]
+    );
   }
-  return member.rows[0];
+  return member.rows[0] || null;
 }
 
 async function redeemPoints(client, memberId, orderId, tier) {
@@ -310,36 +312,35 @@ exports.catalogue = async (req, res) => {
 };
 
 exports.register = async (req, res) => {
-  const client = await db.connect();
-  try {
-    const phoneError = validatePhone(req.body?.phone);
-    if (phoneError) return badRequest(res, phoneError);
-    const name = String(req.body?.name ?? "").trim().slice(0, 120);
-    if (!name) return badRequest(res, "Full name is required.");
+  const phoneError = validatePhone(req.body?.phone);
+  if (phoneError) return badRequest(res, phoneError);
+  const name = String(req.body?.name ?? "").trim().slice(0, 120);
+  if (!name) return badRequest(res, "Full name is required.");
+  if (!process.env.JWT_SECRET) {
+    return res.status(503).json({ message: "Rewards sign-in is not configured." });
+  }
 
-    await client.query("BEGIN");
-    const member = await upsertMember(client, {
+  try {
+    // Use the shared pool query path (no checked-out client) so register
+    // cannot starve the single serverless connection slot.
+    const member = await upsertMember(db, {
       name,
       phone: req.body.phone,
+      forUpdate: false,
     });
-    await client.query("COMMIT");
+    if (!member?.id) {
+      return badRequest(res, "Could not create rewards account.");
+    }
 
     const fresh = await db.query(`${MEMBER_SQL} WHERE m.id = $1`, [member.id]);
-    const row = fresh.rows[0];
+    const row = fresh.rows[0] || member;
     res.json({
       message: "Rewards account ready",
       token: signCustomer(row),
       customer: publicMember(row),
     });
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      /* ignore */
-    }
     serverError(res, error);
-  } finally {
-    client.release();
   }
 };
 

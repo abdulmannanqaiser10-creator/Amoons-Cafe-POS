@@ -5,7 +5,7 @@ import { AdHead, AdPanel } from "../../components/admin/AdminUi";
 import { CheckCircleIcon } from "../../components/Icons";
 
 const TABLES = [1, 2, 3, 4];
-const PUBLIC_HOST = "https://amoonssoft.vercel.app";
+const PUBLIC_HOST = "https://amoonssoft-nine.vercel.app";
 
 function tableUrl(id) {
   // Always encode the live public URL into QR codes so dine-in guests
